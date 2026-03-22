@@ -28,6 +28,7 @@ body{margin:0;font-family:'Segoe UI';background:#f4f6fb;}
 <a href="#" data-section="dashboard" onclick="showSection('dashboard')" class="active">Dashboard</a>
 <a href="#" data-section="orders" onclick="showSection('orders')">Orders</a>
 <a href="#" data-section="payments" onclick="showSection('payments')">Payments</a>
+<a href="#" data-section="distributors" onclick="showSection('distributors')">Distributors</a>
 <a href="#" data-section="users" onclick="showSection('users')">Users</a>
 <a href="#" onclick="logout()">Logout</a>
 </div>
@@ -54,6 +55,10 @@ body{margin:0;font-family:'Segoe UI';background:#f4f6fb;}
 	<div class="col-md-6"><div class="card p-3"><h6>Payment Methods</h6><canvas id="paymentPie"></canvas></div></div>
 </div>
 
+<div class="row g-3 my-2">
+  <div class="col-md-6"><div class="card p-3"><h6>Distributor Performance</h6><canvas id="distributorChart"></canvas></div></div>
+</div>
+
 </div>
 
 <!-- PAYMENTS -->
@@ -67,12 +72,32 @@ body{margin:0;font-family:'Segoe UI';background:#f4f6fb;}
 	<div class="col-md-4">
 		<div class="card p-3"><h6>Automation</h6>
 			<p>Sync demo data to a CSV (simulates Appwrite→Google Sheets)</p>
-			<button class="btn btn-sm btn-primary" onclick="syncPaymentsCSV()">Export Payments CSV</button>
+			<div class="d-flex gap-2">
+			  <button id="exportCsvBtn" class="btn btn-sm btn-primary" onclick="syncPaymentsCSV()">Export Payments CSV</button>
+			  <button id="autoSyncBtn" class="btn btn-sm btn-outline-secondary" onclick="toggleAutoSync()">Start Auto-Sync</button>
+			</div>
 			<hr>
 			<h6>Automation Logs</h6>
 			<div id="automationLogs" style="max-height:220px;overflow:auto;"></div>
+			<hr>
+			<h6>Notifications</h6>
+			<div id="notifications" style="max-height:160px;overflow:auto;"></div>
 		</div>
 	</div>
+</div>
+</div>
+
+<!-- DISTRIBUTORS -->
+<div id="distributors-section" style="display:none;">
+<h5>Distributors</h5>
+<div class="card p-3 mt-3">
+	<div class="mb-3 row">
+		<div class="col-md-4"><input id="newDistName" class="form-control" placeholder="Distributor name"></div>
+		<div class="col-md-3"><input id="newDistContact" class="form-control" placeholder="Contact"></div>
+		<div class="col-md-3"><input id="newDistRegion" class="form-control" placeholder="Region"></div>
+		<div class="col-md-2"><button class="btn btn-primary w-100" onclick="addDistributor()">Add Distributor</button></div>
+	</div>
+	<table class="table"><thead><tr><th>ID</th><th>Name</th><th>Contact</th><th>Region</th><th>Actions</th></tr></thead><tbody id="distributorTable"></tbody></table>
 </div>
 </div>
 
@@ -106,6 +131,7 @@ body{margin:0;font-family:'Segoe UI';background:#f4f6fb;}
 <th>Client</th>
 <th>Total</th>
 <th>Status</th>
+<th>Distributor</th>
 <th>Assignee</th>
 <th>Action</th>
 </tr>
@@ -127,17 +153,20 @@ if(localStorage.getItem("erp_logged_in")!=="true"){
 let orders = JSON.parse(localStorage.getItem("erp_orders")) || [];
 let payments = JSON.parse(localStorage.getItem("erp_payments")) || [];
 let users = JSON.parse(localStorage.getItem("erp_users")) || [];
+let distributors = JSON.parse(localStorage.getItem("erp_distributors")) || [];
 let automationLogs = JSON.parse(localStorage.getItem("erp_automation_logs")) || [];
 
 // Chart instances
 let salesChartInstance = null;
 let revenueChartInstance = null;
 let paymentPieInstance = null;
+let distributorChartInstance = null;
 
 function saveAll(){
 	localStorage.setItem("erp_orders", JSON.stringify(orders));
 	localStorage.setItem("erp_payments", JSON.stringify(payments));
 	localStorage.setItem("erp_users", JSON.stringify(users));
+	localStorage.setItem("erp_distributors", JSON.stringify(distributors));
 	localStorage.setItem("erp_automation_logs", JSON.stringify(automationLogs));
 }
 
@@ -206,6 +235,18 @@ function renderDashboard(){
 		type:'pie',
 		data:{ labels:Object.keys(pmCounts), datasets:[{data:Object.values(pmCounts), backgroundColor:['#3b82f6','#f59e0b','#6366f1','#16a34a']}] }
 	});
+
+	// Distributor performance
+	const distSums = {};
+	orders.forEach(o=>{
+		const d = o.distributor || 'Unassigned';
+		distSums[d] = (distSums[d]||0) + (parseInt(o.total)||0);
+	});
+	if(distributorChartInstance) distributorChartInstance.destroy();
+	distributorChartInstance = new Chart(document.getElementById('distributorChart'),{
+		type: 'bar',
+		data: { labels: Object.keys(distSums), datasets:[{ label: 'Revenue by Distributor', data: Object.values(distSums), backgroundColor: '#f97316' }] }
+	});
 }
 
 function getRevenueLastNDays(n){
@@ -230,9 +271,10 @@ function renderOrders(){
 		else if(o.status==='Approved') actionBtn = `<button class="btn btn-sm btn-warning" onclick="updateStatus(${o.id},'Shipped')">Ship</button>`;
 		else if(o.status==='Shipped') actionBtn = `<button class="btn btn-sm btn-success" onclick="updateStatus(${o.id},'Delivered')">Deliver</button>`;
 
+		const distributor = o.distributor || '-';
 		const assignee = o.assignee || '-';
 
-		table.innerHTML += `<tr><td>${o.id}</td><td>${o.client}</td><td>₹${o.total||0}</td><td class="status-${o.status}">${o.status}</td><td>${assignee}</td><td>${actionBtn} <button class="btn btn-sm btn-secondary" onclick="showAssignModal(${o.id})">Assign</button></td></tr>`;
+		table.innerHTML += `<tr><td>${o.id}</td><td>${o.client}</td><td>₹${o.total||0}</td><td class="status-${o.status}">${o.status}</td><td>${distributor}</td><td>${assignee}</td><td>${actionBtn} <button class="btn btn-sm btn-secondary" onclick="showAssignModal(${o.id})">Assign</button> <button class="btn btn-sm btn-outline-primary" onclick="showAssignDistributorModal(${o.id})">Assign Distributor</button></td></tr>`;
 	});
 }
 
@@ -246,6 +288,10 @@ function updateStatus(id,newStatus){
 		logAutomation('OrderStatusChanged', `Order ${id} -> ${newStatus}`);
 	}
 }
+
+
+let autoSyncInterval = null;
+let notifications = JSON.parse(localStorage.getItem('erp_notifications')) || [];
 
 function renderPayments(){
 	const table = document.getElementById('paymentsTable');
@@ -269,6 +315,36 @@ function syncPaymentsCSV(){
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement('a'); a.href = url; a.download = 'payments_demo.csv'; a.click(); URL.revokeObjectURL(url);
 	logAutomation('ExportPaymentsCSV','User exported payments to CSV');
+	addNotification('System','Payments CSV exported (dummy)');
+}
+
+function addNotification(title, message){
+	notifications.unshift({ time: new Date().toISOString(), title, message });
+	if(notifications.length>50) notifications.pop();
+	localStorage.setItem('erp_notifications', JSON.stringify(notifications));
+	renderNotifications();
+}
+
+function renderNotifications(){
+	const div = document.getElementById('notifications');
+	if(!div) return;
+	div.innerHTML = '';
+	notifications.forEach(n=>{ div.innerHTML += `<div><small>${n.time}</small><div><strong>${n.title}</strong> - ${n.message}</div><hr></div>`; });
+}
+
+function toggleAutoSync(){
+	const btn = document.getElementById('autoSyncBtn');
+	if(autoSyncInterval){
+		clearInterval(autoSyncInterval); autoSyncInterval = null; btn.innerText = 'Start Auto-Sync'; logAutomation('AutoSync','Stopped'); addNotification('System','Auto-sync stopped');
+	} else {
+		autoSyncInterval = setInterval(()=>{
+			// simulate a sync: regenerate a CSV and add a log entry
+			syncPaymentsCSV();
+			logAutomation('AutoSync','Automatic sync completed (dummy)');
+			addNotification('AutoSync','Automatic sync completed (dummy)');
+		}, 10000); // every 10s for demo
+		btn.innerText = 'Stop Auto-Sync'; logAutomation('AutoSync','Started'); addNotification('System','Auto-sync started (every 10s)');
+	}
 }
 
 function logAutomation(action, details){
@@ -292,15 +368,65 @@ function renderUsers(){
 function removeUser(email){ users = users.filter(u=>u.email!==email); saveAll(); renderUsers(); logAutomation('UserRemoved', email); }
 
 // Assignment modal (simple prompt) and logic
+let currentAssignOrderId = null;
+
 function showAssignModal(orderId){
-	const userEmails = users.map(u=>u.email);
-	if(userEmails.length===0){ alert('No users available to assign'); return; }
-	const choice = prompt('Assign order '+orderId+' to (email) - available: '+userEmails.join(', '));
-	if(!choice) return;
-	const selected = users.find(u=>u.email===choice.trim());
-	if(!selected){ alert('User not found'); return; }
-	const o = orders.find(x=>x.id===orderId);
-	if(o){ o.assignee = selected.email; saveAll(); renderOrders(); logAutomation('AssignedOrder', `Order ${orderId} -> ${selected.email}`); }
+	currentAssignOrderId = orderId;
+	const sel = document.getElementById('assignUserSelect');
+	sel.innerHTML = '';
+	users.forEach(u=>{ sel.innerHTML += `<option value="${u.email}">${u.email} (${u.role})</option>`; });
+	const modal = new bootstrapModal('assignUserModal');
+	modal.show();
+}
+
+function assignUserToOrder(){
+	const sel = document.getElementById('assignUserSelect');
+	const email = sel.value;
+	if(!email) return alert('Select user');
+	const o = orders.find(x=>x.id===currentAssignOrderId);
+	if(o){ o.assignee = email; saveAll(); renderOrders(); logAutomation('AssignedOrder', `Order ${currentAssignOrderId} -> ${email}`); addNotification('Assignment', `Order ${currentAssignOrderId} assigned to ${email}`); }
+	const modal = document.getElementById('assignUserModal'); if(modal && modal._bs_modal) modal._bs_modal.hide();
+}
+
+// Distributors UI
+function renderDistributors(){
+	const table = document.getElementById('distributorTable');
+	if(!table) return;
+	table.innerHTML = '';
+	distributors.forEach(d=>{ table.innerHTML += `<tr><td>${d.id}</td><td>${d.name}</td><td>${d.contact}</td><td>${d.region}</td><td><button class="btn btn-sm btn-danger" onclick="removeDistributor('${d.id}')">Remove</button></td></tr>`; });
+}
+
+function addDistributor(){
+	const name = (document.getElementById('newDistName').value||'').trim();
+	const contact = (document.getElementById('newDistContact').value||'').trim();
+	const region = (document.getElementById('newDistRegion').value||'').trim();
+	if(!name){ alert('Enter distributor name'); return; }
+	const id = 'D'+Date.now();
+	distributors.push({ id, name, contact, region }); saveAll(); renderDistributors(); renderDashboard(); logAutomation('DistributorAdded', `${name} (${id})`);
+	document.getElementById('newDistName').value=''; document.getElementById('newDistContact').value=''; document.getElementById('newDistRegion').value='';
+}
+
+function removeDistributor(id){ distributors = distributors.filter(d=>d.id!==id); saveAll(); renderDistributors(); renderDashboard(); logAutomation('DistributorRemoved', id); }
+
+let currentAssignDistributorOrderId = null;
+
+function showAssignDistributorModal(orderId){
+	currentAssignDistributorOrderId = orderId;
+	const sel = document.getElementById('assignDistributorSelect');
+	sel.innerHTML = '';
+	distributors.forEach(d=>{ sel.innerHTML += `<option value="${d.id}">${d.id} - ${d.name} (${d.region})</option>`; });
+	const modal = new bootstrapModal('assignDistributorModal');
+	modal.show();
+}
+
+function assignDistributorToOrder(){
+	const sel = document.getElementById('assignDistributorSelect');
+	const id = sel.value;
+	if(!id) return alert('Select distributor');
+	const selected = distributors.find(d=>d.id===id);
+	const o = orders.find(x=>x.id===currentAssignDistributorOrderId);
+	if(o && selected){ o.distributor = `${selected.id} - ${selected.name}`; saveAll(); renderOrders(); renderDashboard(); logAutomation('AssignedDistributor', `Order ${currentAssignDistributorOrderId} -> ${selected.id}`); addNotification('Distributor', `Order ${currentAssignDistributorOrderId} assigned to ${selected.name}`); notifyDistributor(selected.id, `You have a new order assignment: ${currentAssignDistributorOrderId} (dummy)`); }
+	const modal = document.getElementById('assignDistributorModal'); if(modal && modal._bs_modal) modal._bs_modal.hide();
 }
 
 function addUser(){
@@ -314,13 +440,21 @@ function addUser(){
 
 function showSection(section){
 	// hide all known sections
-	['dashboard','orders','payments','users'].forEach(s=>{ const el = document.getElementById(s+'-section'); if(el) el.style.display='none'; });
+	['dashboard','orders','payments','users','distributors'].forEach(s=>{ const el = document.getElementById(s+'-section'); if(el) el.style.display='none'; });
 	const target = document.getElementById(section+"-section"); if(target) target.style.display='block';
 
 	// update sidebar active link
 	document.querySelectorAll('.sidebar a').forEach(a=>{ a.classList.remove('active'); });
 	const link = document.querySelector(`.sidebar a[data-section="${section}"]`);
 	if(link) link.classList.add('active');
+}
+
+// Distributor notification simulation
+function notifyDistributor(distributorId, message){
+	// Create a dummy notification targeted to distributor
+	addNotification('To:'+distributorId, message);
+	// Also append to automation logs
+	logAutomation('NotifyDistributor', `${distributorId} <- ${message}`);
 }
 
 function logout(){ localStorage.clear(); window.location.href='index.html'; }
@@ -332,7 +466,48 @@ renderOrders();
 renderPayments();
 renderAutomationLogs();
 renderUsers();
+renderDistributors();
 
+</script>
+
+<!-- Modals for assignments -->
+<!-- Using minimal modal HTML; small JS helper 'bootstrapModal' will wrap show() -->
+<div id="assignUserModal" class="modal" tabindex="-1">
+	<div class="modal-dialog">
+		<div class="modal-content">
+			<div class="modal-header"><h5 class="modal-title">Assign Order to User</h5><button type="button" class="btn-close" onclick="document.getElementById('assignUserModal').style.display='none'"></button></div>
+			<div class="modal-body">
+				<select id="assignUserSelect" class="form-control"></select>
+			</div>
+			<div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('assignUserModal').style.display='none'">Cancel</button><button class="btn btn-primary" onclick="assignUserToOrder()">Assign</button></div>
+		</div>
+	</div>
+</div>
+
+<div id="assignDistributorModal" class="modal" tabindex="-1">
+	<div class="modal-dialog">
+		<div class="modal-content">
+			<div class="modal-header"><h5 class="modal-title">Assign Order to Distributor</h5><button type="button" class="btn-close" onclick="document.getElementById('assignDistributorModal').style.display='none'"></button></div>
+			<div class="modal-body">
+				<select id="assignDistributorSelect" class="form-control"></select>
+			</div>
+			<div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('assignDistributorModal').style.display='none'">Cancel</button><button class="btn btn-primary" onclick="assignDistributorToOrder()">Assign</button></div>
+		</div>
+	</div>
+</div>
+
+<script>
+// minimal helper to show our simple modals (since full bootstrap JS isn't loaded)
+function bootstrapModal(id){
+	const el = document.getElementById(id);
+	return {
+		show: ()=>{ el.style.display = 'block'; el._bs_modal = { hide: ()=>{ el.style.display='none'; } } },
+		hide: ()=>{ el.style.display='none'; }
+	};
+}
+
+// ensure notifications render at start
+renderNotifications();
 </script>
 
 </body>
